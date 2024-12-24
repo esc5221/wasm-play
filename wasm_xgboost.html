@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Game Player Rank Predictor</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+    <style>
+        body {
+            font-family: 'Arial, Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .header {
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        .header h1 {
+            color: #00ff00;
+            text-shadow: 0 0 10px rgba(0,255,0,0.5);
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            max-width: 1800px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        .button-group {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 12px 24px;
+            cursor: pointer;
+            background-color: #00ff00;
+            color: #000000;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            font-weight: bold;
+            box-shadow: 0 0 10px rgba(0,255,0,0.5);
+        }
+        button:hover {
+            background-color: #00cc00;
+            transform: translateY(-2px);
+            box-shadow: 0 0 20px rgba(0,255,0,0.7);
+        }
+        button:disabled {
+            background-color: #333333;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        #output {
+            white-space: pre-wrap;
+            background-color: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            height: 500px;
+            overflow-y: auto;
+            border: 1px solid #00ff00;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #00ff00;
+        }
+        .visualization {
+            background-color: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #00ff00;
+        }
+        .visualization img {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .input-group {
+            margin: 20px 0;
+        }
+        textarea {
+            width: 100%;
+            height: 120px;
+            padding: 12px;
+            background-color: #2a2a2a;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            resize: vertical;
+            box-sizing: border-box;
+            color: #00ff00;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #00ff00;
+        }
+        .panel {
+            background-color: #2a2a2a;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0,255,0,0.2);
+            padding: 20px;
+            border: 1px solid #00ff00;
+        }
+        .rank-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #333333;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎮 Game Player Rank Predictor 🎮</h1>
+        <p>게임 통계를 기반으로 플레이어의 실력을 예측하는 AI 시스템</p>
+
+        <div class="button-group">
+            <button onclick="initPyodide()" id="initButton">Initialize System</button>
+            <button onclick="trainModel()" id="trainButton" disabled>Train AI Model</button>
+            <button onclick="runInference()" id="inferenceButton" disabled>Predict Rank</button>
+        </div>
+
+        <div class="rank-info">
+            <h3>🏆 랭크 시스템</h3>
+            <p>Bronze (0) → Silver (1) → Gold (2) → Platinum (3) → Diamond (4)</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="panel">
+            <div class="input-group">
+                <label for="inferenceInput">플레이어 데이터 입력 (JSON format):</label>
+                <textarea id="inferenceInput">[{
+    "avg_kills": 15.5,
+    "avg_deaths": 8.2,
+    "avg_assists": 12.3,
+    "win_rate": 0.52,
+    "headshot_rate": 0.25,
+    "avg_damage": 18500,
+    "playtime_hours": 450
+}]</textarea>
+            </div>
+            <div id="output">결과가 여기에 표시됩니다...</div>
+        </div>
+        <div class="panel">
+            <div class="visualization">
+                <h3>🎯 데이터 분포 시각화</h3>
+                <img id="dataPlot" alt="Data distribution plot" style="width: 100%; display: none;">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pyodide = null;
+        let modelTrained = false;
+        const output = document.getElementById('output');
+
+        function appendToOutput(text) {
+            output.textContent += text;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function clearOutput() {
+            output.textContent = '';
+        }
+
+        async function initPyodide() {
+            const initButton = document.getElementById('initButton');
+            try {
+                initButton.disabled = true;
+                clearOutput();
+                appendToOutput('🎮 시스템 초기화 중...\n');
+
+                pyodide = await loadPyodide({
+                    stdout: (text) => appendToOutput(text + '\n'),
+                    stderr: (text) => appendToOutput('❌ Error: ' + text + '\n')
+                });
+
+                appendToOutput('📦 필요한 패키지 설치 중...\n');
+                await pyodide.loadPackage("micropip");
+                const micropip = pyodide.pyimport("micropip");
+
+                appendToOutput('🔧 AI 모델 준비 중... (약 1-2분 소요)\n');
+                await micropip.install(['scikit-learn', 'xgboost', 'matplotlib', 'pandas']);
+
+                document.getElementById('trainButton').disabled = false;
+                appendToOutput('\n✅ 초기화 완료! Train AI Model 버튼을 클릭하여 모델을 학습하세요.\n');
+            } catch (error) {
+                appendToOutput('\n❌ 초기화 중 오류 발생: ' + error.message + '\n');
+                initButton.disabled = false;
+                console.error('Initialization error:', error);
+            }
+        }
+
+        async function trainModel() {
+            const trainButton = document.getElementById('trainButton');
+            try {
+                trainButton.disabled = true;
+                appendToOutput('\n🎮 AI 모델 학습 시작...\n');
+
+                const pythonCode = `
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.decomposition import PCA
+import xgboost as xgb
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import base64
+from io import BytesIO
+
+print("🎮 게임 데이터 생성 중...")
+np.random.seed(42)
+n_samples = 1000
+
+# 각 랭크별 특성 평균과 표준편차 정의
+rank_stats = {
+    'Bronze': {
+        'kills': (8, 3), 'deaths': (12, 3), 'assists': (5, 2),
+        'win_rate': (0.35, 0.05), 'headshot': (0.15, 0.05),
+        'damage': (12000, 2000), 'playtime': (100, 50)
+    },
+    'Silver': {
+        'kills': (12, 3), 'deaths': (10, 2), 'assists': (8, 2),
+        'win_rate': (0.45, 0.05), 'headshot': (0.2, 0.05),
+        'damage': (15000, 2000), 'playtime': (200, 100)
+    },
+    'Gold': {
+        'kills': (15, 3), 'deaths': (8, 2), 'assists': (10, 3),
+        'win_rate': (0.52, 0.05), 'headshot': (0.25, 0.05),
+        'damage': (18000, 2000), 'playtime': (400, 150)
+    },
+    'Platinum': {
+        'kills': (18, 3), 'deaths': (6, 2), 'assists': (12, 3),
+        'win_rate': (0.58, 0.05), 'headshot': (0.3, 0.05),
+        'damage': (21000, 2000), 'playtime': (800, 200)
+    },
+    'Diamond': {
+        'kills': (22, 3), 'deaths': (5, 2), 'assists': (15, 3),
+        'win_rate': (0.65, 0.05), 'headshot': (0.35, 0.05),
+        'damage': (25000, 2000), 'playtime': (1200, 300)
+    }
+}
+
+# 데이터 생성 함수
+def generate_rank_data(rank_info, n_samples):
+    return {
+        'avg_kills': np.random.normal(rank_info['kills'][0], rank_info['kills'][1], n_samples),
+        'avg_deaths': np.random.normal(rank_info['deaths'][0], rank_info['deaths'][1], n_samples),
+        'avg_assists': np.random.normal(rank_info['assists'][0], rank_info['assists'][1], n_samples),
+        'win_rate': np.clip(np.random.normal(rank_info['win_rate'][0], rank_info['win_rate'][1], n_samples), 0, 1),
+        'headshot_rate': np.clip(np.random.normal(rank_info['headshot'][0], rank_info['headshot'][1], n_samples), 0, 1),
+        'avg_damage': np.random.normal(rank_info['damage'][0], rank_info['damage'][1], n_samples),
+        'playtime_hours': np.clip(np.random.normal(rank_info['playtime'][0], rank_info['playtime'][1], n_samples), 0, None)
+    }
+
+# 각 랭크별 데이터 생성
+data_list = []
+rank_names = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond']
+samples_per_rank = n_samples // len(rank_names)
+
+for rank_idx, rank in enumerate(rank_names):
+    rank_data = generate_rank_data(rank_stats[rank], samples_per_rank)
+    df_rank = pd.DataFrame(rank_data)
+    df_rank['rank'] = rank_idx
+    data_list.append(df_rank)
+
+# 데이터 합치기
+df = pd.concat(data_list, ignore_index=True)
+
+# 데이터 분할
+X = df.drop('rank', axis=1)
+y = df['rank']
+
+print("🎲 학습/테스트 데이터 분할 중...")
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+print("📊 데이터 시각화 중...")
+pca = PCA(n_components=2)
+X_pca = pca.fit_transform(X)
+
+plt.figure(figsize=(12, 8))
+scatter = plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap='viridis', alpha=0.6)
+plt.colorbar(scatter, label='Rank', ticks=range(5))
+
+plt.title('Player Data Distribution (PCA)', fontsize=14, color='white')
+plt.xlabel('First Principal Component', fontsize=12, color='white')
+plt.ylabel('Second Principal Component', fontsize=12, color='white')
+plt.grid(True, alpha=0.3)
+
+# Set plot style for dark theme
+plt.gca().set_facecolor('#2a2a2a')
+plt.gcf().set_facecolor('#2a2a2a')
+plt.gca().tick_params(colors='white')
+for spine in plt.gca().spines.values():
+    spine.set_color('white')
+
+# Save plot to base64
+buf = BytesIO()
+plt.savefig(buf, format='png', dpi=100, bbox_inches='tight',
+            facecolor='#2a2a2a', edgecolor='none')
+buf.seek(0)
+plot_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+plt.close()
+
+print("🎯 XGBoost 모델 학습 중...")
+model = xgb.XGBClassifier(
+    n_estimators=100,
+    max_depth=3,
+    random_state=42
+)
+model.fit(X_train, y_train)
+
+print("📝 성능 평가 중...")
+y_pred = model.predict(X_test)
+accuracy = (y_pred == y_test).mean()
+
+print("✨ 학습 완료!")
+print(f"🎯 테스트 세트 정확도: {accuracy:.4f}")
+
+globals()['trained_model'] = model
+globals()['pca_transformer'] = pca
+print("🎮 이제 'Predict Rank' 버튼을 사용하여 새로운 플레이어의 랭크를 예측할 수 있습니다.")
+
+plot_base64
+                `
+                const base64Plot = await pyodide.runPythonAsync(pythonCode);
+                document.getElementById('dataPlot').src = 'data:image/png;base64,' + base64Plot;
+                document.getElementById('dataPlot').style.display = 'block';
+
+                modelTrained = true;
+                document.getElementById('inferenceButton').disabled = false;
+            } catch (error) {
+                appendToOutput('\n❌ 모델 학습 중 오류 발생: ' + error.message + '\n');
+                console.error('Training error:', error);
+            } finally {
+                trainButton.disabled = false;
+            }
+        }
+
+        async function runInference() {
+            const inferenceButton = document.getElementById('inferenceButton');
+            const inferenceInput = document.getElementById('inferenceInput').value;
+
+            try {
+                inferenceButton.disabled = true;
+                appendToOutput('\n🎯 랭크 예측 시작...\n');
+
+                const pythonCode = `
+import numpy as np
+import json
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import base64
+from io import BytesIO
+import pandas as pd
+
+print("플레이어 데이터 분석 중...")
+input_data = json.loads('''${inferenceInput}''')
+X_new = pd.DataFrame(input_data)
+
+if 'trained_model' not in globals():
+    raise Exception("AI 모델이 학습되지 않았습니다. 먼저 'Train AI Model'을 실행해주세요.")
+
+print("랭크 예측 중...")
+predictions = trained_model.predict(X_new)
+probabilities = trained_model.predict_proba(X_new)
+
+# PCA 변환 및 시각화
+X_pca_new = pca_transformer.transform(X_new)
+
+plt.figure(figsize=(12, 8))
+plt.scatter(X_pca_new[:, 0], X_pca_new[:, 1],
+           c='yellow', marker='*', s=300, label='New Player', zorder=5)
+plt.title('Player Position in Ranking System', fontsize=14, color='white')
+plt.xlabel('First Principal Component', fontsize=12, color='white')
+plt.ylabel('Second Principal Component', fontsize=12, color='white')
+plt.legend(fontsize=10)
+plt.grid(True, alpha=0.3)
+
+# 다크 테마 설정
+plt.gca().set_facecolor('#2a2a2a')
+plt.gcf().set_facecolor('#2a2a2a')
+plt.gca().tick_params(colors='white')
+for spine in plt.gca().spines.values():
+    spine.set_color('white')
+
+buf = BytesIO()
+plt.savefig(buf, format='png', dpi=100, bbox_inches='tight',
+            facecolor='#2a2a2a', edgecolor='none')
+buf.seek(0)
+plot_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+plt.close()
+
+rank_names = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond']
+print("\\n예측 결과:")
+print("-------------------")
+
+for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
+    print(f"플레이어 {i+1}:")
+    print(f"  예측 랭크: {rank_names[pred]}")
+    print("  랭크별 확률:")
+    for rank, probability in zip(rank_names, prob):
+        print(f"    {rank}: {probability:.2%}")
+
+plot_base64
+`
+                const base64Plot = await pyodide.runPythonAsync(pythonCode);
+                document.getElementById('dataPlot').src = 'data:image/png;base64,' + base64Plot;
+            } catch (error) {
+                appendToOutput('\n❌ 예측 중 오류 발생: ' + error.message + '\n');
+                console.error('Inference error:', error);
+            } finally {
+                inferenceButton.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
